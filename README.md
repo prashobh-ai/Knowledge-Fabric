@@ -2,8 +2,7 @@
 
 > A static, GitHub-Pages-hosted knowledge chatbot. Every answer is grounded in **document → page → section → paragraph** citations. The knowledge graph shows **how each answer was derived**.
 
-**No backend. No vector database. No API keys. No Docker.**
-Open the GitHub Pages URL — it works.
+**Open the GitHub Pages URL — it works.**
 
 [![CI](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/ci.yml)
 [![Deploy](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/deploy.yml/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/deploy.yml)
