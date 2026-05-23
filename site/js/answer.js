@@ -1,12 +1,18 @@
 // =============================================================================
 // Answer composer — builds extractive answers with inline citation references.
 // Phase 1: no LLM. Every sentence in the answer ties back to a retrieved chunk.
+//
+// As of the cohesion fix: we receive an already document-cohered candidate pool
+// from search.cohereByDocument, so all chunks here are guaranteed to come from
+// 1-2 topically related documents. The job below is to pick the best sentences
+// from those chunks, not to filter across the whole corpus.
 // =============================================================================
 
 import { tokenize } from './search.js';
 
 const MAX_SENTENCES_PER_CHUNK = 2;
-const MAX_TOTAL_SENTENCES = 6;
+const MAX_TOTAL_SENTENCES = 5;
+const MAX_CHUNKS_USED = 4;
 
 // =============================================================================
 // Sentence splitting & scoring
@@ -29,11 +35,35 @@ function scoreSentence(sentence, queryTerms) {
 // =============================================================================
 // Build answer + citation map
 // =============================================================================
-export function buildAnswer(query, ranked, chunks) {
+export function buildAnswer(query, ranked, chunks, cohesion = {}) {
+  const isConfident = cohesion.isConfident !== false;
+
   if (ranked.length === 0) {
     return {
       answerHtml: "I couldn't find anything in the indexed corpus that matches that question. Try rephrasing, or check the suggested questions above.",
       citations: [],
+      lowConfidence: true,
+    };
+  }
+
+  // Low confidence: query terms matched broadly but no document is clearly
+  // authoritative. Honest "I'm not sure" is more trustworthy than a Frankenstein
+  // answer, which is exactly the message a citation-grounded demo should send.
+  if (!isConfident) {
+    const top = chunks[ranked[0].chunkIdx];
+    return {
+      answerHtml:
+        `I'm not finding a strong match for that question across the indexed corpus. ` +
+        `The closest passage is from <strong>${top.document_name}</strong>, but the relevance signal is weak — ` +
+        `it may not directly answer what you asked. Try a more specific question, or ask about a named entity from the graph.`,
+      citations: [{
+        num: 1,
+        chunkIdx: ranked[0].chunkIdx,
+        chunk: top,
+        score: ranked[0].score,
+        confidence: 0.3,
+      }],
+      lowConfidence: true,
     };
   }
 
@@ -42,9 +72,11 @@ export function buildAnswer(query, ranked, chunks) {
   const pieces = [];
   let usedSentences = 0;
 
-  for (let i = 0; i < ranked.length; i++) {
+  const pool = ranked.slice(0, MAX_CHUNKS_USED);
+
+  for (let i = 0; i < pool.length; i++) {
     if (usedSentences >= MAX_TOTAL_SENTENCES) break;
-    const { chunkIdx, score } = ranked[i];
+    const { chunkIdx, score } = pool[i];
     const chunk = chunks[chunkIdx];
     const sentences = splitSentences(chunk.text);
 
@@ -81,5 +113,10 @@ export function buildAnswer(query, ranked, chunks) {
     c.confidence = c.score / maxScore;
   }
 
-  return { answerHtml, citations };
+  return {
+    answerHtml,
+    citations,
+    lowConfidence: false,
+    primarySource: cohesion.dominantDoc || null,
+  };
 }

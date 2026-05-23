@@ -57,3 +57,73 @@ export class BM25 {
     return ranked.slice(0, topK);
   }
 }
+
+// =============================================================================
+// Document-cohesion clustering — prevents Frankenstein answers across unrelated
+// docs by collapsing the candidate pool to chunks from the dominant document(s).
+// =============================================================================
+//
+// Why this exists: BM25 ranks chunks independently. Across a small focused
+// corpus that's fine. Across a 50-doc heterogeneous corpus, the top-K chunks
+// can come from unrelated documents, and stitching them produces incoherent
+// answers. This step picks the document(s) where the query has the strongest
+// aggregate signal, then returns only chunks from those.
+//
+// confidence = distinctness of the top chunk vs the rest of the candidate
+// pool. Low confidence means the query terms matched broadly but weakly — no
+// document is clearly authoritative — and the caller should signal that.
+// =============================================================================
+export function cohereByDocument(rawRanked, chunks, opts = {}) {
+  const maxChunks = opts.maxChunks ?? 6;
+  const dominanceThreshold = opts.dominanceThreshold ?? 1.5;
+  // Confidence floor calibrated against small (4-doc) and medium (50-doc)
+  // corpora. Smaller corpora produce tighter score distributions because
+  // there's less noise — so a 1.3x gap between the top chunk and the tail
+  // is meaningful. Truly weak queries land below 1.2.
+  const minConfidentRatio = opts.minConfidentRatio ?? 1.3;
+
+  if (rawRanked.length === 0) {
+    return { ranked: [], confidence: 0, docIds: [], dominantDoc: null, isConfident: false };
+  }
+
+  // Aggregate BM25 scores per source document
+  const docScores = new Map();
+  for (const r of rawRanked) {
+    const docId = chunks[r.chunkIdx].document_id;
+    docScores.set(docId, (docScores.get(docId) || 0) + r.score);
+  }
+
+  // Rank documents by aggregate score
+  const sortedDocs = [...docScores.entries()].sort((a, b) => b[1] - a[1]);
+  const topDocAgg = sortedDocs[0][1];
+  const secondDocAgg = sortedDocs[1]?.[1] || 0;
+  const dominates = secondDocAgg === 0 || topDocAgg / secondDocAgg >= dominanceThreshold;
+
+  // Keep top 1 doc when one clearly dominates, otherwise top 2 for context blending
+  const keepDocIds = new Set(
+    dominates ? [sortedDocs[0][0]] : [sortedDocs[0][0], sortedDocs[1][0]]
+  );
+
+  const filtered = rawRanked
+    .filter(r => keepDocIds.has(chunks[r.chunkIdx].document_id))
+    .slice(0, maxChunks);
+
+  // Confidence quality: gap between top chunk score and the tail of the pool.
+  // High distinctness = the query strongly matched one specific area.
+  const topScore = filtered[0]?.score || 0;
+  const tailIdx = Math.min(rawRanked.length - 1, 9);
+  const tailScore = rawRanked[tailIdx]?.score || 0.0001;
+  const distinctness = topScore / tailScore;
+  const confidence = Math.min(1, distinctness / 4);
+  const isConfident = distinctness >= minConfidentRatio;
+
+  return {
+    ranked: filtered,
+    confidence,
+    distinctness,
+    isConfident,
+    docIds: [...keepDocIds],
+    dominantDoc: chunks[filtered[0]?.chunkIdx]?.document_name || null,
+    totalDocsConsidered: sortedDocs.length,
+  };
+}

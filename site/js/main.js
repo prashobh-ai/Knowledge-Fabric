@@ -2,7 +2,7 @@
 // Knowledge Fabric · Command Center — main entry
 // ============================================================================
 
-import { BM25 } from './search.js';
+import { BM25, cohereByDocument } from './search.js';
 import { buildAnswer } from './answer.js';
 import { KnowledgeGraph } from './graph.js';
 import { initInsights } from './insights.js';
@@ -162,25 +162,36 @@ async function ask(question) {
 
   await new Promise(r => setTimeout(r, 80));
 
-  const ranked = state.bm25.search(question, 6);
-  const { answerHtml, citations } = buildAnswer(question, ranked, state.chunks);
+  // Deep BM25 funnel → document-cohesion clustering → answer assembly.
+  // The deep funnel (20) gives the cohesion step enough signal to identify
+  // the dominant document(s); without it, we'd be re-ranking on too few
+  // candidates and could miss the true topical cluster.
+  const rawRanked = state.bm25.search(question, 20);
+  const cohesion = cohereByDocument(rawRanked, state.chunks);
+  const ranked = cohesion.ranked;
+  const { answerHtml, citations, lowConfidence } = buildAnswer(question, ranked, state.chunks, cohesion);
 
   const trace = state.graph.highlightTrace(citations.map(c => c.chunk.id));
 
   state.lastQuery = question;
-  state.lastResult = { ranked, citations, answerHtml, trace };
+  state.lastResult = { ranked, citations, answerHtml, trace, cohesion, lowConfidence };
 
   appendAssistantMessage(question, answerHtml, citations, ranked, trace);
   renderLineage(question, answerHtml, citations);
-  updateCopilotMetrics(citations, trace, ranked);
+  updateCopilotMetrics(citations, trace, ranked, cohesion);
   updateGalaxyStatus(trace);
 }
 
-function updateCopilotMetrics(citations, trace, ranked) {
+function updateCopilotMetrics(citations, trace, ranked, cohesion) {
   const metricsEl = document.getElementById('copilot-metrics');
   metricsEl.hidden = false;
-  const topConf = citations[0]?.confidence ? Math.round(citations[0].confidence * 100) : 0;
-  document.getElementById('m-conf').textContent = `${topConf}%`;
+  // Confidence shown to the user reflects retrieval distinctness, not the
+  // intra-result normalized score (which is misleadingly always 100% for the
+  // top citation). Distinctness = how strongly the query points to one area.
+  const conf = cohesion?.confidence != null
+    ? Math.round(cohesion.confidence * 100)
+    : (citations[0]?.confidence ? Math.round(citations[0].confidence * 100) : 0);
+  document.getElementById('m-conf').textContent = `${conf}%`;
   document.getElementById('m-sources').textContent = citations.length;
   document.getElementById('m-rels').textContent = trace.edgeCount;
   document.getElementById('m-paths').textContent = Math.max(1, trace.edgeCount);
