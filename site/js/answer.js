@@ -19,7 +19,7 @@
 //      headings, not in the body text.
 // =============================================================================
 
-import { tokenize } from './search.js';
+import { tokenize, expandAgainstVocab, isBoilerplateSection } from './search.js';
 
 const MAX_TOTAL_SENTENCES = 5;
 const MIN_SENTENCE_LEN = 25;
@@ -119,12 +119,34 @@ export function buildAnswer(query, ranked, chunks, cohesion = {}) {
     };
   }
 
+  // Expand each query term with morphological variants present in the corpus,
+  // mirroring what BM25 retrieval already did. Without this, a typo-tolerant
+  // query like "...how found it" retrieves the Founding Story chunk (BM25
+  // saw "found" → "founded") but scores its sentences at 0 here because the
+  // literal "found" token doesn't appear. The wrong chunks would then win
+  // sentence ranking. Vocabulary is sourced from the cohesion stage.
+  const vocab = cohesion.bm25Index?.termId || {};
+  const expandedQueryTerms = [];
+  for (const t of queryTerms) {
+    if (Object.keys(vocab).length > 0) {
+      const variants = expandAgainstVocab(t, vocab);
+      for (const v of variants) expandedQueryTerms.push(v);
+    } else {
+      expandedQueryTerms.push(t);
+    }
+  }
+  const scoringTerms = expandedQueryTerms.length > queryTerms.length ? expandedQueryTerms : queryTerms;
+
   // === Global sentence pool across cohesive chunks ===
   const seen = new Set();
   const candidates = [];
 
   for (const r of ranked) {
     const chunk = chunks[r.chunkIdx];
+    // Skip boilerplate sections — URL lists, press releases, version stamps,
+    // and other meta-content that's keyword-dense but not actually answer
+    // material. Half the corpus chunks are in these sections.
+    if (isBoilerplateSection(chunk.section_path)) continue;
     const leaf = chunk.section_path?.[chunk.section_path.length - 1];
     const namePrefix = nameLikeLeaf(leaf);
     const sentences = splitSentences(chunk.text);
@@ -132,7 +154,7 @@ export function buildAnswer(query, ranked, chunks, cohesion = {}) {
     for (const raw of sentences) {
       const s = raw.trim();
       if (s.length < MIN_SENTENCE_LEN) continue;
-      const sScore = scoreSentence(s, queryTerms);
+      const sScore = scoreSentence(s, scoringTerms);
       if (sScore === 0) continue;
 
       const key = dedupKey(s);
@@ -155,6 +177,34 @@ export function buildAnswer(query, ranked, chunks, cohesion = {}) {
     if (b.score !== a.score) return b.score - a.score;
     return b.chunkScore - a.chunkScore;
   });
+
+  // Fallback path: cohesion correctly identified the doc (filename match) but
+  // the body uses synonyms or rephrasing for the query terms, so no sentence
+  // strictly matches. Example: doc title says "QMentisAI" but body refers to
+  // it as "AI-Powered QE". In that case, take the first sentence of each
+  // top non-boilerplate chunk — we already know the chunk is on-topic.
+  if (candidates.length === 0 && cohesion.docNameMatch) {
+    for (const r of ranked.slice(0, 3)) {
+      const chunk = chunks[r.chunkIdx];
+      if (isBoilerplateSection(chunk.section_path)) continue;
+      const sentences = splitSentences(chunk.text);
+      const first = sentences.find(s => s.trim().length >= MIN_SENTENCE_LEN);
+      if (!first) continue;
+      const trimmed = first.trim();
+      const key = dedupKey(trimmed);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const leaf = chunk.section_path?.[chunk.section_path.length - 1];
+      candidates.push({
+        sentence: trimmed,
+        score: 0.5,
+        chunkScore: r.score,
+        chunkIdx: r.chunkIdx,
+        chunk,
+        namePrefix: nameLikeLeaf(leaf),
+      });
+    }
+  }
 
   const selected = candidates.slice(0, MAX_TOTAL_SENTENCES);
 

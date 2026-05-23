@@ -2,7 +2,7 @@
 // Knowledge Fabric · Command Center — main entry
 // ============================================================================
 
-import { BM25, cohereByDocument } from './search.js';
+import { BM25, cohereByDocument, tokenize } from './search.js';
 import { buildAnswer } from './answer.js';
 import { KnowledgeGraph } from './graph.js';
 import { initInsights } from './insights.js';
@@ -167,7 +167,10 @@ async function ask(question) {
   // the dominant document(s); without it, we'd be re-ranking on too few
   // candidates and could miss the true topical cluster.
   const rawRanked = state.bm25.search(question, 20);
-  const cohesion = cohereByDocument(rawRanked, state.chunks);
+  const cohesion = cohereByDocument(rawRanked, state.chunks, {
+    queryTerms: tokenize(question),
+    bm25Index: state.bm25,
+  });
   const ranked = cohesion.ranked;
   const { answerHtml, citations, lowConfidence } = buildAnswer(question, ranked, state.chunks, cohesion);
 
