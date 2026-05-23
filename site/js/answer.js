@@ -1,18 +1,45 @@
 // =============================================================================
-// Answer composer — builds extractive answers with inline citation references.
-// Phase 1: no LLM. Every sentence in the answer ties back to a retrieved chunk.
+// Answer composer — extractive answers with inline citation references.
 //
-// As of the cohesion fix: we receive an already document-cohered candidate pool
-// from search.cohereByDocument, so all chunks here are guaranteed to come from
-// 1-2 topically related documents. The job below is to pick the best sentences
-// from those chunks, not to filter across the whole corpus.
+// Architecture (post-cohesion):
+//   1. The cohesive ranked pool is guaranteed to come from 1-2 related docs.
+//   2. We pool ALL sentences across all chunks in that pool and score them
+//      globally, NOT 2-per-chunk. Per-chunk slicing was the source of leaked
+//      noise from neighboring profiles in densely-packed chunks (e.g. a
+//      leadership doc where multiple bios live in one chunk).
+//   3. Stopwords are stripped from query terms BEFORE sentence scoring. Without
+//      this, "the", "is", "of" cause virtually any English sentence to score
+//      positive, drowning out the real signal.
+//   4. There is no fallback to first-sentence-of-chunk. A sentence makes it
+//      into the answer only if it contains at least one non-stopword query
+//      token. Honest "I don't know" beats a fabricated sentence.
+//   5. When a chunk's section_path leaf looks like a named entity (a person's
+//      name, a product name), we prepend it to the sentence. This is what
+//      makes "who founded X" actually answerable — the names live in section
+//      headings, not in the body text.
 // =============================================================================
 
 import { tokenize } from './search.js';
 
-const MAX_SENTENCES_PER_CHUNK = 2;
 const MAX_TOTAL_SENTENCES = 5;
-const MAX_CHUNKS_USED = 4;
+const MIN_SENTENCE_LEN = 25;
+
+// English stopwords that pollute query-term scoring. Kept minimal — only the
+// highest-frequency function words that appear in nearly every sentence. We
+// don't strip "what", "how", "why" etc. because those still narrow the
+// domain a little when combined with content words.
+const QUERY_STOPWORDS = new Set([
+  'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'from',
+  'and', 'or', 'but', 'if', 'as', 'so',
+  'this', 'that', 'these', 'those',
+  'it', 'its', 'do', 'does', 'did',
+  'who', 'whom',
+]);
+
+function contentTerms(query) {
+  return tokenize(query).filter(t => !QUERY_STOPWORDS.has(t));
+}
 
 // =============================================================================
 // Sentence splitting & scoring
@@ -27,9 +54,34 @@ function scoreSentence(sentence, queryTerms) {
   const tokens = new Set(tokenize(sentence));
   let hits = 0;
   for (const t of queryTerms) if (tokens.has(t)) hits++;
-  // Length-normalized overlap, slight preference for medium-length sentences
-  const lenPenalty = Math.min(1, tokens.size / 20) * Math.min(1, 40 / Math.max(tokens.size, 1));
-  return hits * (0.6 + 0.4 * lenPenalty);
+  if (hits === 0) return 0;
+  // Reward sentences that match more distinct query terms (covers more of the
+  // intent), with a soft length-normalization preference for mid-length.
+  const tokenCount = tokens.size;
+  const lenPenalty = Math.min(1, tokenCount / 18) * Math.min(1, 45 / Math.max(tokenCount, 1));
+  return hits * (0.55 + 0.45 * lenPenalty);
+}
+
+// Section-path leaf heuristic: looks like a person/proper-noun name worth
+// prepending to its associated sentence. Two to four capitalized words, no
+// generic section vocabulary.
+const GENERIC_SECTION_WORDS = /\b(section|chapter|part|overview|introduction|conclusion|appendix|abstract|service|product|company|team|leadership|executive|board|page|brief|summary|history|mission|vision|purpose|growth)\b/i;
+
+function nameLikeLeaf(s) {
+  if (!s || typeof s !== 'string') return null;
+  const trimmed = s.trim();
+  if (trimmed.length < 4 || trimmed.length > 45) return null;
+  if (GENERIC_SECTION_WORDS.test(trimmed)) return null;
+  const words = trimmed.split(/\s+/);
+  if (words.length < 2 || words.length > 4) return null;
+  // Each word must start with a capital letter (allow apostrophes/periods/hyphens for names like O'Brien, Jr., Madhu-Murty)
+  if (!words.every(w => /^[A-Z][A-Za-z'.\-]*$/.test(w))) return null;
+  return trimmed;
+}
+
+// Dedup by content-word signature so near-duplicate sentences don't all show
+function dedupKey(s) {
+  return s.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90);
 }
 
 // =============================================================================
@@ -46,9 +98,6 @@ export function buildAnswer(query, ranked, chunks, cohesion = {}) {
     };
   }
 
-  // Low confidence: query terms matched broadly but no document is clearly
-  // authoritative. Honest "I'm not sure" is more trustworthy than a Frankenstein
-  // answer, which is exactly the message a citation-grounded demo should send.
   if (!isConfident) {
     const top = chunks[ranked[0].chunkIdx];
     return {
@@ -56,65 +105,95 @@ export function buildAnswer(query, ranked, chunks, cohesion = {}) {
         `I'm not finding a strong match for that question across the indexed corpus. ` +
         `The closest passage is from <strong>${top.document_name}</strong>, but the relevance signal is weak — ` +
         `it may not directly answer what you asked. Try a more specific question, or ask about a named entity from the graph.`,
-      citations: [{
-        num: 1,
-        chunkIdx: ranked[0].chunkIdx,
-        chunk: top,
-        score: ranked[0].score,
-        confidence: 0.3,
-      }],
+      citations: [{ num: 1, chunkIdx: ranked[0].chunkIdx, chunk: top, score: ranked[0].score, confidence: 0.3 }],
       lowConfidence: true,
     };
   }
 
-  const queryTerms = tokenize(query);
-  const citations = [];
-  const pieces = [];
-  let usedSentences = 0;
+  const queryTerms = contentTerms(query);
+  if (queryTerms.length === 0) {
+    return {
+      answerHtml: 'Please ask a more specific question — I need at least one content word to search on.',
+      citations: [],
+      lowConfidence: true,
+    };
+  }
 
-  const pool = ranked.slice(0, MAX_CHUNKS_USED);
+  // === Global sentence pool across cohesive chunks ===
+  const seen = new Set();
+  const candidates = [];
 
-  for (let i = 0; i < pool.length; i++) {
-    if (usedSentences >= MAX_TOTAL_SENTENCES) break;
-    const { chunkIdx, score } = pool[i];
-    const chunk = chunks[chunkIdx];
+  for (const r of ranked) {
+    const chunk = chunks[r.chunkIdx];
+    const leaf = chunk.section_path?.[chunk.section_path.length - 1];
+    const namePrefix = nameLikeLeaf(leaf);
     const sentences = splitSentences(chunk.text);
 
-    const scored = sentences
-      .map(s => ({ s: s.trim(), score: scoreSentence(s, queryTerms) }))
-      .filter(x => x.s.length > 20 && x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, MAX_SENTENCES_PER_CHUNK);
+    for (const raw of sentences) {
+      const s = raw.trim();
+      if (s.length < MIN_SENTENCE_LEN) continue;
+      const sScore = scoreSentence(s, queryTerms);
+      if (sScore === 0) continue;
 
-    // Fallback if query terms didn't match any sentence: use the first sentence
-    const chosen = scored.length ? scored : [{ s: sentences[0]?.trim() || chunk.paragraph_excerpt, score: 0 }];
-    if (!chosen[0].s) continue;
+      const key = dedupKey(s);
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    const citationNum = citations.length + 1;
-    citations.push({
-      num: citationNum,
-      chunkIdx,
-      chunk,
-      score,
-    });
-
-    for (const { s } of chosen) {
-      if (usedSentences >= MAX_TOTAL_SENTENCES) break;
-      pieces.push(`${s}<sup class="cite-ref" data-cite="${citationNum}">[${citationNum}]</sup>`);
-      usedSentences++;
+      candidates.push({
+        sentence: s,
+        score: sScore,
+        chunkScore: r.score,
+        chunkIdx: r.chunkIdx,
+        chunk,
+        namePrefix,
+      });
     }
   }
 
-  const answerHtml = pieces.join(' ');
+  // Rank: sentence-match score primary, originating chunk BM25 score as tiebreaker
+  candidates.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.chunkScore - a.chunkScore;
+  });
 
-  // Normalize confidence: top score → 1.0
-  const maxScore = Math.max(...citations.map(c => c.score), 0.001);
-  for (const c of citations) {
-    c.confidence = c.score / maxScore;
+  const selected = candidates.slice(0, MAX_TOTAL_SENTENCES);
+
+  if (selected.length === 0) {
+    const top = chunks[ranked[0].chunkIdx];
+    return {
+      answerHtml:
+        `The closest match is from <strong>${top.document_name}</strong>, but no passage there directly addresses your query terms. ` +
+        `Try rephrasing, or click an entity in the graph to drill in.`,
+      citations: [{ num: 1, chunkIdx: ranked[0].chunkIdx, chunk: top, score: ranked[0].score, confidence: 0.3 }],
+      lowConfidence: true,
+    };
   }
 
+  // Citation numbering: each unique chunk gets ONE citation number, assigned
+  // in the order it's first referenced by a selected sentence.
+  const citationsByChunk = new Map();
+  const pieces = [];
+  for (const c of selected) {
+    if (!citationsByChunk.has(c.chunkIdx)) {
+      const num = citationsByChunk.size + 1;
+      citationsByChunk.set(c.chunkIdx, {
+        num,
+        chunkIdx: c.chunkIdx,
+        chunk: c.chunk,
+        score: c.chunkScore,
+      });
+    }
+    const cite = citationsByChunk.get(c.chunkIdx);
+    const displayText = c.namePrefix ? `${c.namePrefix} — ${c.sentence}` : c.sentence;
+    pieces.push(`${displayText}<sup class="cite-ref" data-cite="${cite.num}">[${cite.num}]</sup>`);
+  }
+
+  const citations = [...citationsByChunk.values()];
+  const maxScore = Math.max(...citations.map(c => c.score), 0.001);
+  for (const c of citations) c.confidence = c.score / maxScore;
+
   return {
-    answerHtml,
+    answerHtml: pieces.join(' '),
     citations,
     lowConfidence: false,
     primarySource: cohesion.dominantDoc || null,
