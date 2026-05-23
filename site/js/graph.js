@@ -2,11 +2,19 @@
 // Knowledge graph — renders entities and relationships, highlights reasoning trace.
 // =============================================================================
 
-const NODE_BASE = '#4a5478';
-const NODE_RELATED = '#6b8eff';
-const NODE_ACTIVE = '#5ee3c5';
-const EDGE_BASE = '#2a3354';
-const EDGE_ACTIVE = '#5ee3c5';
+// Theme-aware color resolution (reads computed CSS variables)
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  return {
+    NODE_BASE: cs.getPropertyValue('--node-base').trim() || (isLight ? '#B8C5DE' : '#4A5694'),
+    NODE_RELATED: cs.getPropertyValue('--qz-blue').trim() || '#4D7CFF',
+    NODE_ACTIVE: cs.getPropertyValue('--qz-pink').trim() || '#EE1C5C',
+    EDGE_BASE: isLight ? 'rgba(77, 124, 255, 0.22)' : 'rgba(120, 140, 200, 0.35)',
+    EDGE_ACTIVE: cs.getPropertyValue('--qz-pink').trim() || '#EE1C5C',
+    LABEL: isLight ? '#4F5B7D' : '#C9D2EA',
+  };
+}
 
 // =============================================================================
 // Graph wrapper
@@ -26,13 +34,14 @@ export class KnowledgeGraph {
   }
 
   render() {
+    const C = themeColors();
     const nodes = this.index.entities.map(e => ({
       id: e.id,
       label: e.name,
       title: `${e.name} · ${e.mention_count} mentions`,
       value: e.mention_count,
-      color: { background: NODE_BASE, border: NODE_BASE, highlight: { background: NODE_ACTIVE, border: NODE_ACTIVE } },
-      font: { color: '#9ba3bd', size: 12, face: 'Inter' },
+      color: { background: C.NODE_BASE, border: C.NODE_BASE, highlight: { background: C.NODE_ACTIVE, border: C.NODE_ACTIVE } },
+      font: { color: C.LABEL, size: 12, face: 'Inter' },
       borderWidth: 0,
       shape: 'dot',
     }));
@@ -42,7 +51,7 @@ export class KnowledgeGraph {
       from: r.source,
       to: r.target,
       value: r.weight,
-      color: { color: EDGE_BASE, highlight: EDGE_ACTIVE, opacity: 0.4 },
+      color: { color: C.EDGE_BASE, highlight: C.EDGE_ACTIVE, opacity: 0.5 },
       smooth: { type: 'continuous', roundness: 0.2 },
     }));
 
@@ -75,7 +84,7 @@ export class KnowledgeGraph {
       },
       nodes: {
         scaling: { min: 8, max: 30, label: { enabled: true, min: 11, max: 16 } },
-        shadow: { enabled: true, color: 'rgba(89, 232, 197, 0.18)', size: 8, x: 0, y: 0 },
+        shadow: { enabled: true, color: 'rgba(238, 28, 92, 0.22)', size: 10, x: 0, y: 0 },
       },
       edges: {
         width: 0.5,
@@ -96,6 +105,20 @@ export class KnowledgeGraph {
     this.network.once('stabilizationIterationsDone', () => {
       this.network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
     });
+
+    // Re-color nodes + edges when theme toggles
+    this._lastTrace = null;
+    this._themeObserver = new MutationObserver(() => this._recolor());
+    this._themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+
+  // Re-apply theme-aware colors. If a trace is active, re-run it; otherwise reset.
+  _recolor() {
+    if (this._lastTrace && this._lastTrace.length > 0) {
+      this.highlightTrace(this._lastTrace);
+    } else {
+      this.resetHighlight();
+    }
   }
 
   // ===========================================================================
@@ -103,6 +126,7 @@ export class KnowledgeGraph {
   // plus their direct neighbors, and the edges connecting them.
   // ===========================================================================
   highlightTrace(retrievedChunkIds) {
+    this._lastTrace = [...retrievedChunkIds];
     const activeEntityIds = new Set();
     for (const cid of retrievedChunkIds) {
       const chunk = this.chunksById.get(cid);
@@ -127,20 +151,26 @@ export class KnowledgeGraph {
       }
     }
 
+    const C = themeColors();
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const activeLabel = isLight ? '#FFFFFF' : '#FFE9F0';
+    const relatedLabel = isLight ? '#FFFFFF' : '#E6EEFF';
+    const baseLabel = isLight ? '#8893B5' : '#6E78A0';
+
     const nodeUpdates = [];
     for (const entity of this.index.entities) {
       let color, fontColor, borderWidth;
       if (activeEntityIds.has(entity.id)) {
-        color = NODE_ACTIVE;
-        fontColor = '#e6eaf5';
+        color = C.NODE_ACTIVE;
+        fontColor = activeLabel;
         borderWidth = 2;
       } else if (neighborIds.has(entity.id)) {
-        color = NODE_RELATED;
-        fontColor = '#9ba3bd';
+        color = C.NODE_RELATED;
+        fontColor = relatedLabel;
         borderWidth = 0;
       } else {
-        color = NODE_BASE;
-        fontColor = '#5a627c';
+        color = C.NODE_BASE;
+        fontColor = baseLabel;
         borderWidth = 0;
       }
       nodeUpdates.push({
@@ -155,8 +185,8 @@ export class KnowledgeGraph {
     const edgeUpdates = this.relationships.map((r, i) => ({
       id: i,
       color: activeEdgeIds.has(i)
-        ? { color: EDGE_ACTIVE, opacity: 0.8 }
-        : { color: EDGE_BASE, opacity: 0.15 },
+        ? { color: C.EDGE_ACTIVE, opacity: 0.85 }
+        : { color: C.EDGE_BASE, opacity: 0.15 },
       width: activeEdgeIds.has(i) ? Math.max(1, Math.log(r.weight + 1) * 0.8) : 0.4,
     }));
     this.edges.update(edgeUpdates);
@@ -176,17 +206,19 @@ export class KnowledgeGraph {
   }
 
   resetHighlight() {
+    this._lastTrace = null;
+    const C = themeColors();
     const nodeUpdates = this.index.entities.map(e => ({
       id: e.id,
-      color: { background: NODE_BASE, border: NODE_BASE },
-      font: { color: '#9ba3bd', size: 12, face: 'Inter' },
+      color: { background: C.NODE_BASE, border: C.NODE_BASE },
+      font: { color: C.LABEL, size: 12, face: 'Inter' },
       borderWidth: 0,
     }));
     this.nodes.update(nodeUpdates);
 
     const edgeUpdates = this.relationships.map((r, i) => ({
       id: i,
-      color: { color: EDGE_BASE, opacity: 0.4 },
+      color: { color: C.EDGE_BASE, opacity: 0.5 },
       width: 0.5,
     }));
     this.edges.update(edgeUpdates);
