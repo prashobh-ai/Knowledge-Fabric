@@ -33,7 +33,7 @@ class ParsedDocument:
 # Markdown — preferred input format; heading structure is explicit
 # =============================================================================
 def parse_markdown(path: Path) -> ParsedDocument:
-    raw = path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8", errors="replace")
     html = md_lib.markdown(raw, extensions=["fenced_code", "tables"])
     soup = BeautifulSoup(html, "html.parser")
 
@@ -97,7 +97,7 @@ def _looks_like_heading(line: str) -> bool:
 
 
 def parse_text(path: Path) -> ParsedDocument:
-    raw = path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8", errors="replace")
     paragraphs: list[Paragraph] = []
     section_stack: list[str] = []
     para_idx = 0
@@ -165,7 +165,12 @@ def parse_pdf(path: Path) -> ParsedDocument:
     para_idx = 0
 
     for page_num, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            # Individual corrupt/encrypted pages should not kill the whole document.
+            # The pipeline keeps going with whatever pages parse cleanly.
+            continue
         # Split into blocks (double newline) then check for headings
         blocks = re.split(r"\n\s*\n", text)
         for block in blocks:
@@ -219,11 +224,27 @@ def parse_docx(path: Path) -> ParsedDocument:
     section_stack: list[tuple[int, str]] = []
     para_idx = 0
 
-    for p in doc.paragraphs:
+    def style_name(p) -> str:
+        """Resolve a paragraph's style name defensively.
+
+        python-docx returns None for `p.style` when a paragraph references a
+        deleted style, lives in headers/footers, embedded objects, or some
+        third-party-authored docs. Also guards against `style.name` being None.
+        """
+        try:
+            st = p.style
+            if st is None:
+                return ""
+            return (st.name or "").lower()
+        except (AttributeError, KeyError):
+            return ""
+
+    def emit_block(p):
+        nonlocal para_idx
         text = p.text.strip()
         if not text:
-            continue
-        style = (p.style.name or "").lower()
+            return
+        style = style_name(p)
         if style.startswith("heading"):
             try:
                 level = int(style.split()[-1])
@@ -232,7 +253,7 @@ def parse_docx(path: Path) -> ParsedDocument:
             while section_stack and section_stack[-1][0] >= level:
                 section_stack.pop()
             section_stack.append((level, text))
-            continue
+            return
         paragraphs.append(
             Paragraph(
                 text=text,
@@ -242,6 +263,16 @@ def parse_docx(path: Path) -> ParsedDocument:
             )
         )
         para_idx += 1
+
+    for p in doc.paragraphs:
+        emit_block(p)
+
+    # Tables: walk cell paragraphs so content in tabular blocks is indexed too
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    emit_block(p)
 
     return ParsedDocument(
         name=path.name,
