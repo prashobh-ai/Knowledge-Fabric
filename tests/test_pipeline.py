@@ -159,3 +159,38 @@ def test_full_pipeline_emits_valid_index(tmp_path, docs_source_dir):
     chunk = loaded["chunks"][0]
     for field in ("id", "document_name", "page", "section_path", "paragraph_indices", "text", "paragraph_excerpt", "entities"):
         assert field in chunk, f"chunk missing field: {field}"
+
+
+# =============================================================================
+# DOCX edge cases — regression for the None-style crash and table content
+# =============================================================================
+def test_docx_parser_handles_none_style_and_tables(tmp_path):
+    """Real-world DOCX files often have paragraphs where p.style is None
+    (deleted style refs, headers/footers, third-party generators). The parser
+    must not crash on those, and must also index content inside tables."""
+    docx_mod = pytest.importorskip("docx")
+    from pipeline.parsers import parse_docx
+
+    doc = docx_mod.Document()
+    doc.add_heading("Section One", level=1)
+    doc.add_paragraph("First paragraph with a normal style.")
+
+    p = doc.add_paragraph("Paragraph with a nulled style reference.")
+    p.style = None  # The exact failure mode from production
+
+    doc.add_heading("Section Two", level=2)
+    doc.add_paragraph("Tail paragraph.")
+
+    table = doc.add_table(rows=1, cols=2)
+    table.rows[0].cells[0].text = "Knowledge Fabric content inside a table cell."
+    table.rows[0].cells[1].text = "Should also be indexed."
+
+    out = tmp_path / "edge.docx"
+    doc.save(str(out))
+
+    parsed = parse_docx(out)
+    texts = [p.text for p in parsed.paragraphs]
+    assert any("nulled style" in t for t in texts), "None-style paragraph dropped"
+    assert any("table cell" in t for t in texts), "Table content not indexed"
+    # Headings must still build the section path for content underneath them
+    assert any("Section One" in p.section_path for p in parsed.paragraphs)
