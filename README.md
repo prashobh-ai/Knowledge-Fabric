@@ -1,4 +1,4 @@
-# Knowledge Fabric — Phase 1
+# Knowledge Fabric — Demo
 
 > A static, GitHub-Pages-hosted knowledge chatbot. Every answer is grounded in **document → page → section → paragraph** citations. The knowledge graph shows **how each answer was derived**.
 
