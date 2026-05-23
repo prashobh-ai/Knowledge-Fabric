@@ -61,7 +61,7 @@ def chunk_paragraphs(
     cur_page: int = 1
     next_id = start_chunk_id
 
-    def flush():
+    def flush(clear_overlap: bool = False):
         nonlocal cur_paras, cur_len, next_id
         if not cur_paras:
             return
@@ -80,8 +80,11 @@ def chunk_paragraphs(
             )
         )
         next_id += 1
-        # Overlap: keep the last N paragraphs as seed for the next chunk
-        if OVERLAP_PARAGRAPHS and len(cur_paras) > OVERLAP_PARAGRAPHS:
+        # Overlap is for narrative continuity within a section. When crossing a
+        # section boundary we explicitly drop it — overlapping the previous
+        # section's tail into the next section's chunk would re-introduce the
+        # exact bug we're fixing.
+        if not clear_overlap and OVERLAP_PARAGRAPHS and len(cur_paras) > OVERLAP_PARAGRAPHS:
             tail = cur_paras[-OVERLAP_PARAGRAPHS:]
             cur_paras = list(tail)
             cur_len = sum(len(p.text) for p in tail)
@@ -91,10 +94,13 @@ def chunk_paragraphs(
 
     for para in paragraphs:
         section_changed = para.section_path != cur_section or para.page != cur_page
-        if section_changed and cur_len >= MIN_CHARS:
-            flush()
-            cur_paras = []
-            cur_len = 0
+        # Always flush on section change — even if the current chunk is small.
+        # Citation integrity depends on section_path matching the chunk's actual
+        # content; bundling paragraphs across a heading boundary makes the
+        # metadata lie about what's in the chunk and corrupts downstream answers
+        # for structured docs (leadership rosters, FAQs, glossaries, etc.).
+        if section_changed and cur_paras:
+            flush(clear_overlap=True)
         cur_section = list(para.section_path)
         cur_page = para.page
         cur_paras.append(para)
