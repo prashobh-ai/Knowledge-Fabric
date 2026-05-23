@@ -1,7 +1,6 @@
 /* ============================================================================
    Knowledge Fabric · Command Center — Mission control aesthetic
    ============================================================================ */
-
 :root {
   --bg: #05070f;
   --bg-1: #080c18;
@@ -72,6 +71,7 @@ h3 { font-size: 13.5px; }
 h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-mute); font-weight: 600; }
 p { margin: 0; }
 button { font-family: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
