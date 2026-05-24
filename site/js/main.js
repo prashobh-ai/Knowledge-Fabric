@@ -55,6 +55,30 @@ async function boot() {
   initLineage({ onChunkClick: id => showChunkDetail(state.chunksById.get(id)) });
   initExplain(state.index);
   initInsights(state.index, { onEntityClick: showEntityDetail });
+
+  // Seed Section 2 + Section 3 with a real demo answer so a director scrolling
+  // past the hero immediately sees the product working, not an empty stage.
+  // First user click runs through the normal ask() flow and overwrites this.
+  seedDemoAnswer();
+}
+
+// Pick a strong demo question — generic logic: prefer "What is <product>?"
+// using the first product doc filename match. Falls back to any suggested
+// question. Runs silently — no auto-scroll, no chat append.
+function seedDemoAnswer() {
+  const docNames = [...new Set(state.chunks.map(c => c.document_name))].sort();
+  let demoQ = null;
+  for (const name of docNames) {
+    const m = name.match(/^[\d._-]*Product[_-](.+?)\.[A-Za-z]+$/i);
+    if (m) { demoQ = `What is ${m[1].replace(/[_-]+/g, ' ').trim()}?`; break; }
+  }
+  if (!demoQ) {
+    const suggestions = generateSuggestedQuestions();
+    demoQ = suggestions[0];
+  }
+  if (!demoQ) return;
+  // Run on next tick to let Galaxy finish first render
+  setTimeout(() => ask(demoQ, { silent: true }), 350);
 }
 
 function showFatalError(message) {
@@ -228,18 +252,25 @@ function renderMaturityScore() {
   const m = computeMaturity();
   state.maturity = m;
 
-  const valEl = document.getElementById('maturity-value');
-  const ringEl = document.getElementById('maturity-ring-fill');
-  if (valEl) animateNumber(valEl, m.overall);
-  if (ringEl) {
-    const circumference = 113; // 2 * pi * 18
-    const offset = circumference * (1 - m.overall / 100);
-    const t = maturityTone(m.overall);
-    ringEl.style.strokeDashoffset = offset;
-    ringEl.style.stroke = t.stroke;
+  // Narrative layout — big ring in Section 4. Old top-bar maturity-card
+  // elements (kept hidden in DOM as legacy shim) get the values too for
+  // backward compatibility, but the visible UI is the big ring below.
+  const valNumEl = document.getElementById('health-score-num');
+  const ringBigEl = document.getElementById('health-ring-fill');
+  const t = maturityTone(m.overall);
+  if (valNumEl) animateNumber(valNumEl, m.overall);
+  if (ringBigEl) {
+    // 2 * pi * 52 ≈ 327
+    const circumference = 327;
+    // Start at 0 and animate to the real offset on next frame so the
+    // transition fires every time.
+    requestAnimationFrame(() => {
+      ringBigEl.style.strokeDashoffset = circumference * (1 - m.overall / 100);
+      ringBigEl.style.stroke = t.stroke;
+    });
   }
 
-  const breakdownEl = document.getElementById('maturity-breakdown');
+  const breakdownEl = document.getElementById('health-breakdown');
   if (breakdownEl) {
     const rows = [
       { label: 'Coverage',       v: m.coverage,       hint: 'chunks per doc' },
@@ -249,38 +280,20 @@ function renderMaturityScore() {
       { label: 'Freshness',      v: m.freshness,      hint: 'recent-year mentions' },
     ];
     breakdownEl.innerHTML = rows.map(r => {
-      const t = maturityTone(r.v);
+      const tn = maturityTone(r.v);
       return `
-        <div class="mp-row" title="${r.hint}">
-          <span class="mp-row-label">${r.label}</span>
-          <span class="mp-row-bar" data-tone="${t.tone}" style="--w: ${r.v}%"></span>
-          <span class="mp-row-val">${r.v}</span>
+        <div class="health-row" title="${r.hint}">
+          <span class="health-row-label">${r.label}</span>
+          <span class="health-row-bar" data-tone="${tn.tone}" style="--w: ${r.v}%"></span>
+          <span class="health-row-val">${r.v}</span>
         </div>`;
     }).join('');
-    // Force layout reflow then trigger the bar animations
     requestAnimationFrame(() => {
-      breakdownEl.querySelectorAll('.mp-row-bar').forEach(el => {
+      breakdownEl.querySelectorAll('.health-row-bar').forEach(el => {
         const cs = el.style.getPropertyValue('--w');
         el.style.setProperty('--w', '0%');
         requestAnimationFrame(() => el.style.setProperty('--w', cs));
       });
-    });
-  }
-
-  // Popover toggle
-  const card = document.getElementById('maturity-card');
-  const popover = document.getElementById('maturity-popover');
-  const closeBtn = document.getElementById('maturity-popover-close');
-  if (card && popover) {
-    card.addEventListener('click', e => {
-      e.stopPropagation();
-      popover.hidden = !popover.hidden;
-    });
-    closeBtn?.addEventListener('click', () => { popover.hidden = true; });
-    document.addEventListener('click', e => {
-      if (!popover.hidden && !popover.contains(e.target) && e.target !== card) {
-        popover.hidden = true;
-      }
     });
   }
 }
@@ -468,16 +481,15 @@ function setupSuggestions() {
 // ============================================================================
 // Ask flow — orchestrates all four panes
 // ============================================================================
-async function ask(question) {
-  clearCopilotEmpty();
-  appendUserMessage(question);
+async function ask(question, opts = {}) {
+  const silent = opts.silent === true;
+  if (!silent) {
+    clearCopilotEmpty();
+    appendUserMessage(question);
+  }
 
   await new Promise(r => setTimeout(r, 80));
 
-  // Deep BM25 funnel → document-cohesion clustering → answer assembly.
-  // The deep funnel (20) gives the cohesion step enough signal to identify
-  // the dominant document(s); without it, we'd be re-ranking on too few
-  // candidates and could miss the true topical cluster.
   const rawRanked = state.bm25.search(question, 20);
   const cohesion = cohereByDocument(rawRanked, state.chunks, {
     queryTerms: tokenize(question),
@@ -491,10 +503,60 @@ async function ask(question) {
   state.lastQuery = question;
   state.lastResult = { ranked, citations, answerHtml, trace, cohesion, lowConfidence };
 
-  appendAssistantMessage(question, answerHtml, citations, ranked, trace);
+  populateAnswerStage(question, answerHtml, citations, ranked, trace, cohesion);
+  if (!silent) appendAssistantMessage(question, answerHtml, citations, ranked, trace);
   renderLineage(question, answerHtml, citations);
   updateCopilotMetrics(citations, trace, ranked, cohesion);
   updateGalaxyStatus(trace);
+
+  // Auto-scroll only on first REAL ask, not on the seeded demo answer
+  if (!silent && !state.hasAutoScrolled) {
+    state.hasAutoScrolled = true;
+    setTimeout(() => {
+      const target = document.getElementById('section-answer');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 250);
+  }
+}
+
+// Populate Section 2 — Live Answer stage with the latest Q/A
+function populateAnswerStage(question, answerHtml, citations, ranked, trace, cohesion) {
+  const emptyEl = document.getElementById('answer-stage-empty');
+  const liveEl = document.getElementById('answer-stage-live');
+  if (!liveEl) return;
+  if (emptyEl) emptyEl.hidden = true;
+  liveEl.hidden = false;
+
+  const qEl = document.getElementById('answer-stage-question');
+  const aEl = document.getElementById('answer-stage-text');
+  if (qEl) qEl.textContent = question;
+  if (aEl) {
+    aEl.innerHTML = answerHtml;
+    // Inline citation refs → open chunk detail
+    aEl.querySelectorAll('.cite-ref').forEach(ref => {
+      ref.addEventListener('click', () => {
+        const n = parseInt(ref.dataset.cite, 10);
+        const cite = citations.find(c => c.num === n);
+        if (cite) showChunkDetail(cite.chunk);
+      });
+    });
+  }
+
+  // Metrics row
+  const conf = cohesion?.confidence != null
+    ? Math.round(cohesion.confidence * 100)
+    : (citations[0]?.confidence ? Math.round(citations[0].confidence * 100) : 0);
+  const confFillEl = document.getElementById('answer-stage-conf-fill');
+  const confValEl = document.getElementById('answer-stage-conf-val');
+  const srcEl = document.getElementById('answer-stage-sources');
+  const pathsEl = document.getElementById('answer-stage-paths');
+  if (confFillEl) {
+    confFillEl.style.width = '0%';
+    requestAnimationFrame(() => { confFillEl.style.width = `${conf}%`; });
+  }
+  if (confValEl) confValEl.textContent = `${conf}%`;
+  if (srcEl) srcEl.textContent = citations.length;
+  if (pathsEl) pathsEl.textContent = Math.max(1, trace.edgeCount);
 }
 
 function updateCopilotMetrics(citations, trace, ranked, cohesion) {

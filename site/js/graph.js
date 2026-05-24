@@ -159,25 +159,38 @@ export class KnowledgeGraph {
 
     const nodeUpdates = [];
     for (const entity of this.index.entities) {
-      let color, fontColor, borderWidth;
+      let color, fontColor, borderWidth, size, opacity;
       if (activeEntityIds.has(entity.id)) {
+        // Activated — full bright pink, slightly bigger
         color = C.NODE_ACTIVE;
         fontColor = activeLabel;
-        borderWidth = 2;
+        borderWidth = 3;
+        size = 28;
+        opacity = 1.0;
       } else if (neighborIds.has(entity.id)) {
+        // Neighbor — bright blue, normal size
         color = C.NODE_RELATED;
         fontColor = relatedLabel;
-        borderWidth = 0;
+        borderWidth = 1;
+        size = 18;
+        opacity = 0.95;
       } else {
+        // Unrelated — fade hard. This is the "BOOM, everything unrelated
+        // disappears" effect. Without aggressive fade, the activation is
+        // too subtle for a director sitting 4 feet from the screen.
         color = C.NODE_BASE;
         fontColor = baseLabel;
         borderWidth = 0;
+        size = 6;
+        opacity = 0.12;
       }
       nodeUpdates.push({
         id: entity.id,
-        color: { background: color, border: color },
+        color: { background: color, border: color, opacity },
         font: { color: fontColor, size: 12, face: 'Inter' },
         borderWidth,
+        size,
+        opacity,
       });
     }
     this.nodes.update(nodeUpdates);
@@ -185,9 +198,9 @@ export class KnowledgeGraph {
     const edgeUpdates = this.relationships.map((r, i) => ({
       id: i,
       color: activeEdgeIds.has(i)
-        ? { color: C.EDGE_ACTIVE, opacity: 0.85 }
-        : { color: C.EDGE_BASE, opacity: 0.15 },
-      width: activeEdgeIds.has(i) ? Math.max(1, Math.log(r.weight + 1) * 0.8) : 0.4,
+        ? { color: C.EDGE_ACTIVE, opacity: 0.9 }
+        : { color: C.EDGE_BASE, opacity: 0.04 },   // was 0.15 — make unrelated nearly invisible
+      width: activeEdgeIds.has(i) ? Math.max(1.2, Math.log(r.weight + 1) * 1.1) : 0.2,
     }));
     this.edges.update(edgeUpdates);
 
@@ -196,6 +209,16 @@ export class KnowledgeGraph {
         nodes: [...activeEntityIds, ...neighborIds],
         animation: { duration: 600, easingFunction: 'easeInOutQuad' },
       });
+      // Trigger the BOOM CSS flash (radial pink pulse from center) — gives
+      // a visceral "activated" feel even before the user notices the fade.
+      const canvas = this.container;
+      if (canvas) {
+        canvas.classList.remove('graph-activated');
+        // Force reflow so re-adding the class re-runs the animation
+        void canvas.offsetWidth;
+        canvas.classList.add('graph-activated');
+        setTimeout(() => canvas.classList.remove('graph-activated'), 1700);
+      }
     }
 
     return {
@@ -210,9 +233,11 @@ export class KnowledgeGraph {
     const C = themeColors();
     const nodeUpdates = this.index.entities.map(e => ({
       id: e.id,
-      color: { background: C.NODE_BASE, border: C.NODE_BASE },
+      color: { background: C.NODE_BASE, border: C.NODE_BASE, opacity: 1.0 },
       font: { color: C.LABEL, size: 12, face: 'Inter' },
       borderWidth: 0,
+      size: 14,
+      opacity: 1.0,
     }));
     this.nodes.update(nodeUpdates);
 
