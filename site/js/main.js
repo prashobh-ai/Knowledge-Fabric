@@ -44,6 +44,10 @@ async function boot() {
   state.bm25 = new BM25(state.index.bm25);
 
   renderCommandTiles();
+  renderMaturityScore();
+  renderKnowledgeRisk();
+  renderLineageDemo();
+  populateSuggestions();
   setupGalaxy();
   setupCopilot();
   setupSuggestions();
@@ -105,6 +109,314 @@ function estimateDomains() {
     if (c.section_path?.length) docTopSections.add(c.section_path[0]);
   }
   return Math.max(state.index.documents.length, docTopSections.size);
+}
+
+// ============================================================================
+// Suggested questions — derived generically from doc filename patterns
+// Works for any corpus following `NN_Category_Topic.docx` naming. Falls back
+// to safe defaults if no patterns match.
+// ============================================================================
+function generateSuggestedQuestions() {
+  const docNames = [...new Set(state.chunks.map(c => c.document_name))].sort();
+  const products = [], services = [], company = [];
+  for (const name of docNames) {
+    const m = name.match(/^[\d._-]*([A-Za-z]+)[_-](.+?)\.[A-Za-z]+$/);
+    if (!m) continue;
+    const kind = m[1].toLowerCase();
+    const topic = m[2].replace(/[_-]+/g, ' ').trim();
+    if (/product/.test(kind)) products.push(topic);
+    else if (/service/.test(kind)) services.push(topic);
+    else if (/company|org/.test(kind)) company.push(topic);
+  }
+
+  const questions = [];
+  if (products[0]) questions.push(`What is ${products[0]}?`);
+  if (company.find(t => /leader|founder|team/i.test(t))) questions.push('Who founded the company?');
+  if (services[0]) {
+    const lowered = services[0].toLowerCase();
+    questions.push(`Tell me about ${lowered}`);
+  }
+  if (company.find(t => /mission|vision|purpose/i.test(t))) questions.push('What is the mission?');
+
+  // Backfill with more products/services if we still don't have 4
+  let pi = 1, si = 1;
+  while (questions.length < 4) {
+    if (products[pi] && !questions.some(q => q.includes(products[pi]))) {
+      questions.push(`What is ${products[pi]}?`);
+      pi++;
+    } else if (services[si]) {
+      questions.push(`How does ${services[si].toLowerCase()} work?`);
+      si++;
+    } else break;
+  }
+  return questions.slice(0, 4);
+}
+
+function populateSuggestions() {
+  const container = document.getElementById('suggestions');
+  if (!container) return;
+  const qs = generateSuggestedQuestions();
+  container.innerHTML = '';
+  for (const q of qs) {
+    const btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.textContent = q;
+    container.appendChild(btn);
+  }
+}
+
+// ============================================================================
+// Maturity Score — five components computed from observable corpus properties.
+// Numbers are intentionally generic so the same logic works for any corpus.
+// ============================================================================
+const BOILER_RE = /\b(evidence|references|channels|sources|press|recognitions?|insights|blogs?|whitepapers?|reports?|videos?|youtube|linkedin|twitter|official|version|tone)\b/i;
+function isBoilerplate(section_path) {
+  return (section_path || []).some(s => BOILER_RE.test(s));
+}
+
+function computeMaturity() {
+  const chunks = state.chunks;
+  const docs = new Set(chunks.map(c => c.document_id));
+  const entities = state.index.entities || [];
+  const rels = state.index.relationships || [];
+
+  // Coverage: chunks per doc, scaled against an ideal of 15
+  const avgPerDoc = chunks.length / Math.max(docs.size, 1);
+  const coverage = clamp(Math.round(35 + (avgPerDoc / 15) * 60), 20, 95);
+
+  // Relationships: graph density (edges per entity)
+  const relDensity = rels.length / Math.max(entities.length, 1);
+  const relationships = clamp(Math.round(35 + (relDensity / 8) * 60), 20, 95);
+
+  // Ownership: % of section paths with a name-like leaf (proper-noun pattern)
+  const nameRe = /^([A-Z][a-zA-Z'.-]+ ){1,3}[A-Z][a-zA-Z'.-]+$/;
+  let nameLeaves = 0, totalLeaves = 0;
+  const seenSection = new Set();
+  for (const c of chunks) {
+    const leaf = (c.section_path || []).slice(-1)[0];
+    if (!leaf) continue;
+    if (seenSection.has(leaf)) continue;
+    seenSection.add(leaf);
+    totalLeaves++;
+    if (nameRe.test(leaf.trim())) nameLeaves++;
+  }
+  const ownership = clamp(Math.round(45 + (nameLeaves / Math.max(totalLeaves, 1)) * 120), 25, 95);
+
+  // Documentation depth: % chunks NOT in boilerplate sections
+  const nonBoiler = chunks.filter(c => !isBoilerplate(c.section_path)).length;
+  const documentation = Math.round((nonBoiler / Math.max(chunks.length, 1)) * 100);
+
+  // Freshness: % chunks mentioning a recent year (sliding window of last 3 years)
+  const now = new Date().getFullYear();
+  const yearRe = new RegExp(`\\b(${now}|${now-1}|${now-2})\\b`);
+  const recent = chunks.filter(c => yearRe.test(c.text || '')).length;
+  const freshness = clamp(Math.round(35 + (recent / Math.max(chunks.length, 1)) * 100), 20, 95);
+
+  const overall = Math.round((coverage + relationships + ownership + documentation + freshness) / 5);
+  return { overall, coverage, relationships, ownership, documentation, freshness };
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function maturityTone(score) {
+  if (score >= 80) return { tone: '', stroke: 'var(--sem-green)' };
+  if (score >= 60) return { tone: 'warn', stroke: 'var(--sem-amber)' };
+  return { tone: 'risk', stroke: 'var(--sem-pink)' };
+}
+
+function renderMaturityScore() {
+  const m = computeMaturity();
+  state.maturity = m;
+
+  const valEl = document.getElementById('maturity-value');
+  const ringEl = document.getElementById('maturity-ring-fill');
+  if (valEl) animateNumber(valEl, m.overall);
+  if (ringEl) {
+    const circumference = 113; // 2 * pi * 18
+    const offset = circumference * (1 - m.overall / 100);
+    const t = maturityTone(m.overall);
+    ringEl.style.strokeDashoffset = offset;
+    ringEl.style.stroke = t.stroke;
+  }
+
+  const breakdownEl = document.getElementById('maturity-breakdown');
+  if (breakdownEl) {
+    const rows = [
+      { label: 'Coverage',       v: m.coverage,       hint: 'chunks per doc' },
+      { label: 'Relationships',  v: m.relationships,  hint: 'graph density' },
+      { label: 'Ownership',      v: m.ownership,      hint: 'named owners present' },
+      { label: 'Documentation',  v: m.documentation,  hint: 'non-boilerplate share' },
+      { label: 'Freshness',      v: m.freshness,      hint: 'recent-year mentions' },
+    ];
+    breakdownEl.innerHTML = rows.map(r => {
+      const t = maturityTone(r.v);
+      return `
+        <div class="mp-row" title="${r.hint}">
+          <span class="mp-row-label">${r.label}</span>
+          <span class="mp-row-bar" data-tone="${t.tone}" style="--w: ${r.v}%"></span>
+          <span class="mp-row-val">${r.v}</span>
+        </div>`;
+    }).join('');
+    // Force layout reflow then trigger the bar animations
+    requestAnimationFrame(() => {
+      breakdownEl.querySelectorAll('.mp-row-bar').forEach(el => {
+        const cs = el.style.getPropertyValue('--w');
+        el.style.setProperty('--w', '0%');
+        requestAnimationFrame(() => el.style.setProperty('--w', cs));
+      });
+    });
+  }
+
+  // Popover toggle
+  const card = document.getElementById('maturity-card');
+  const popover = document.getElementById('maturity-popover');
+  const closeBtn = document.getElementById('maturity-popover-close');
+  if (card && popover) {
+    card.addEventListener('click', e => {
+      e.stopPropagation();
+      popover.hidden = !popover.hidden;
+    });
+    closeBtn?.addEventListener('click', () => { popover.hidden = true; });
+    document.addEventListener('click', e => {
+      if (!popover.hidden && !popover.contains(e.target) && e.target !== card) {
+        popover.hidden = true;
+      }
+    });
+  }
+}
+
+// ============================================================================
+// Knowledge Risk — surface gaps that matter to the business. Each card is
+// computed from real index data so the numbers tell the truth.
+// ============================================================================
+function computeRisk() {
+  const chunks = state.chunks;
+  const entities = state.index.entities || [];
+  const docCount = new Set(chunks.map(c => c.document_id)).size;
+
+  // 1. Boilerplate dominance: % of corpus that's URLs/citations/metadata
+  const boilerChunks = chunks.filter(c => isBoilerplate(c.section_path)).length;
+  const boilerPct = Math.round((boilerChunks / Math.max(chunks.length, 1)) * 100);
+
+  // 2. Lone-source domains: top-level sections appearing in only one doc
+  const topByDoc = new Map();
+  for (const c of chunks) {
+    const top = (c.section_path || [])[0];
+    if (!top) continue;
+    if (!topByDoc.has(top)) topByDoc.set(top, new Set());
+    topByDoc.get(top).add(c.document_id);
+  }
+  const loneTopics = [...topByDoc.values()].filter(s => s.size === 1).length;
+
+  // 3. Singleton entities: entities mentioned only once — fragile concepts
+  // mention_count is already on each entity record.
+  const singletons = entities.filter(e => (e.mention_count || 0) <= 1).length;
+
+  // 4. Isolated documents: documents that share NO entity with any other doc.
+  // Build doc → set of docs it's linked to via shared entities.
+  const docLinks = new Map();
+  for (let i = 0; i < docCount; i++) docLinks.set(i, new Set());
+  for (const e of entities) {
+    const ds = e.document_ids || [];
+    if (ds.length < 2) continue;
+    for (const a of ds) {
+      for (const b of ds) {
+        if (a === b) continue;
+        if (docLinks.has(a)) docLinks.get(a).add(b);
+      }
+    }
+  }
+  let isolatedDocs = 0;
+  for (const links of docLinks.values()) {
+    if (links.size === 0) isolatedDocs++;
+  }
+
+  return { boilerPct, loneTopics, singletons, isolatedDocs, totalEntities: entities.length };
+}
+
+function renderKnowledgeRisk() {
+  const r = computeRisk();
+  state.risk = r;
+  const body = document.getElementById('risk-body');
+  if (!body) return;
+
+  const card = (value, label, sub, tone) =>
+    `<div class="risk-card" data-tone="${tone}">
+       <span class="risk-card-value">${value}</span>
+       <span class="risk-card-label">${label}</span>
+       <span class="risk-card-sub">${sub}</span>
+     </div>`;
+
+  body.innerHTML = [
+    card(r.boilerPct + '%', 'of corpus is boilerplate',
+         'URL lists, version stamps, footers',
+         r.boilerPct > 40 ? 'high' : r.boilerPct > 20 ? 'medium' : 'low'),
+    card(r.loneTopics, 'lone-source domains',
+         'top-level topics present in only one document',
+         r.loneTopics > 10 ? 'medium' : 'low'),
+    card(r.singletons, 'singleton entities',
+         'concepts mentioned in just one passage',
+         r.singletons > r.totalEntities * 0.3 ? 'medium' : 'low'),
+    card(r.isolatedDocs, 'isolated documents',
+         'no cross-document entity links — knowledge silos',
+         r.isolatedDocs > 5 ? 'high' : r.isolatedDocs > 0 ? 'medium' : 'low'),
+  ].join('');
+}
+
+// ============================================================================
+// Source Lineage demo state — populate with a representative real chunk so the
+// user sees the lineage UX before asking anything.
+// ============================================================================
+function renderLineageDemo() {
+  const chunks = state.chunks;
+  // Pick a non-boilerplate, reasonably substantive chunk to demo with
+  const candidate = chunks.find(c =>
+    !isBoilerplate(c.section_path) &&
+    (c.text || '').length > 80 &&
+    (c.section_path || []).length >= 1
+  ) || chunks[0];
+  if (!candidate) return;
+
+  const statsEl = document.getElementById('lineage-demo-stats');
+  if (statsEl) {
+    statsEl.innerHTML = `
+      <div class="lineage-demo-stat">
+        <span class="lineage-demo-stat-val">${state.index.stats.document_count}</span>
+        <span class="lineage-demo-stat-label">Documents</span>
+      </div>
+      <div class="lineage-demo-stat">
+        <span class="lineage-demo-stat-val">${state.index.stats.chunk_count}</span>
+        <span class="lineage-demo-stat-label">Cite-able Passages</span>
+      </div>
+      <div class="lineage-demo-stat">
+        <span class="lineage-demo-stat-val">100%</span>
+        <span class="lineage-demo-stat-label">Verbatim Citation</span>
+      </div>
+    `;
+  }
+
+  const crumbEl = document.getElementById('lineage-demo-breadcrumb');
+  if (crumbEl) {
+    const docShort = (candidate.document_name || '').replace(/\.[a-z]+$/i, '').replace(/_/g, ' ');
+    const sectionTrail = (candidate.section_path || []).slice(0, 3);
+    const parts = [
+      `<span class="crumb-cite">[1]</span>`,
+      `<span class="crumb-doc">${escapeHtml(docShort)}</span>`,
+      `<span class="crumb-sep">›</span>`,
+      `<span>page ${candidate.page || 1}</span>`,
+    ];
+    for (const s of sectionTrail) {
+      parts.push(`<span class="crumb-sep">›</span><span>${escapeHtml(s)}</span>`);
+    }
+    crumbEl.innerHTML = parts.join('');
+  }
+
+  const exEl = document.getElementById('lineage-demo-excerpt');
+  if (exEl) {
+    const sentence = (candidate.text || '').split(/(?<=[.!?])\s+/)[0] || candidate.text || '';
+    const snippet = sentence.length > 240 ? sentence.slice(0, 237) + '…' : sentence;
+    exEl.textContent = '“' + snippet + '”';
+  }
 }
 
 // ============================================================================
