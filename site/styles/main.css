@@ -2049,3 +2049,940 @@ sup.cite-ref {
   text-align: left;
   line-height: 1.3;
 }
+
+/* ===========================================================================
+   PHASE 5 — Narrative scroll layout
+   ===========================================================================
+   The previous version was a single-viewport command center. The new design
+   tells a story: hero → answer → explainability → health → insights. Each
+   section gets full breathing room. Old grid rules don't apply when `body`
+   carries the .narrative class — we override them here.
+   =========================================================================== */
+
+/* ===== Reset: kill the old single-screen layout when narrative is active ===== */
+body.narrative {
+  display: block;
+  height: auto;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+body.narrative .grid,
+body.narrative .cmd-bar,
+body.narrative .pane,
+body.narrative .pane-galaxy,
+body.narrative .pane-copilot,
+body.narrative .pane-lineage,
+body.narrative .pane-insights,
+body.narrative .pane-risk { display: none !important; }
+
+/* Compatibility shim — keep DOM-required nodes invisible but reachable by JS */
+.legacy-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  pointer-events: none;
+}
+
+/* ===== Story sections ===== */
+.story-section {
+  position: relative;
+  width: 100%;
+  padding: clamp(60px, 8vh, 100px) clamp(24px, 5vw, 80px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(28px, 4vh, 56px);
+  border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  z-index: 1;
+}
+.story-section:nth-child(even) {
+  background: color-mix(in oklab, var(--bg) 96%, var(--qz-blue) 4%);
+}
+
+.story-head {
+  max-width: 880px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.story-eyebrow {
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--sem-pink, var(--qz-pink));
+}
+.story-title {
+  font: 400 clamp(28px, 4vw, 48px)/1.1 'Instrument Serif', Georgia, serif;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0;
+}
+.story-title em {
+  font-style: italic;
+  background: linear-gradient(120deg, var(--sem-pink, var(--qz-pink)), var(--sem-blue, var(--qz-blue)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.story-sub {
+  font-size: clamp(14px, 1.3vw, 16.5px);
+  line-height: 1.6;
+  color: var(--text-dim);
+  max-width: 720px;
+  margin: 0;
+}
+.cite-inline-demo {
+  color: var(--sem-amber, #F5A623);
+  font-weight: 600;
+  background: color-mix(in oklab, var(--sem-amber, #F5A623) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+/* ============================================================
+   SECTION 1 — HERO
+   ============================================================ */
+.hero-section {
+  height: 100vh;
+  min-height: 720px;
+  padding: 0;
+  border-top: none;
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+}
+.hero-section::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 75% 60%, color-mix(in oklab, var(--qz-pink) 12%, transparent), transparent 55%),
+    radial-gradient(ellipse at 25% 70%, color-mix(in oklab, var(--qz-blue) 14%, transparent), transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+.hero-galaxy {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.hero-overlay {
+  position: absolute;
+  top: 50%;
+  left: clamp(24px, 5vw, 80px);
+  transform: translateY(-50%);
+  width: min(560px, 50vw);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  animation: fadeUp 1s var(--ease) 0.2s backwards;
+}
+.hero-eyebrow {
+  font: 600 11px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--sem-pink, var(--qz-pink));
+}
+.hero-title {
+  font: 400 clamp(40px, 5.5vw, 72px)/1.0 'Instrument Serif', Georgia, serif;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  margin: 0;
+}
+.hero-title em {
+  font-style: italic;
+  background: linear-gradient(120deg, var(--sem-pink, var(--qz-pink)) 10%, var(--sem-blue, var(--qz-blue)) 80%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  display: inline-block;
+  padding-right: 0.08em;       /* prevent italic-ascender clipping */
+}
+.hero-sub {
+  font-size: clamp(14px, 1.2vw, 16px);
+  line-height: 1.6;
+  color: var(--text-dim);
+  max-width: 520px;
+  margin: 0;
+}
+
+/* Big hero composer */
+.hero-composer {
+  display: flex;
+  gap: 10px;
+  background: color-mix(in oklab, var(--bg-1) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 35%, var(--border));
+  border-radius: 14px;
+  padding: 8px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.35), 0 0 0 1px color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 12%, transparent);
+  transition: box-shadow 240ms ease, border-color 240ms ease;
+}
+.hero-composer:focus-within {
+  border-color: var(--sem-pink, var(--qz-pink));
+  box-shadow: 0 18px 50px rgba(0,0,0,0.45), 0 0 28px color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 35%, transparent);
+}
+.hero-composer input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: 500 16px/1 'Inter', sans-serif;
+  padding: 12px 14px;
+  outline: none;
+}
+.hero-composer input::placeholder { color: var(--text-mute); }
+.hero-composer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, var(--sem-pink, var(--qz-pink)), var(--sem-blue, var(--qz-blue)));
+  color: white;
+  border: 0;
+  font: 600 14px/1 'Inter', sans-serif;
+  padding: 0 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 200ms ease;
+}
+.hero-composer button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 50%, transparent);
+}
+.hero-composer button:active { transform: translateY(0); }
+.hero-composer button:disabled { opacity: 0.5; cursor: wait; }
+
+.hero-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.hero-suggestions .chip {
+  background: color-mix(in oklab, var(--bg-1) 78%, transparent);
+  border: 1px solid color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 25%, var(--border));
+  color: var(--text);
+  font: 500 12.5px/1 'Inter', sans-serif;
+  padding: 9px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 160ms ease;
+  animation: fadeUp 0.5s var(--ease) backwards;
+}
+.hero-suggestions .chip:nth-child(1) { animation-delay: 0.35s; }
+.hero-suggestions .chip:nth-child(2) { animation-delay: 0.45s; }
+.hero-suggestions .chip:nth-child(3) { animation-delay: 0.55s; }
+.hero-suggestions .chip:nth-child(4) { animation-delay: 0.65s; }
+.hero-suggestions .chip:hover {
+  border-color: var(--sem-pink, var(--qz-pink));
+  background: color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 12%, var(--bg-1));
+  box-shadow: 0 0 18px color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 30%, transparent);
+}
+
+.hero-scroll-cue {
+  position: absolute;
+  bottom: 32px;
+  right: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 11px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  animation: scrollCue 2.4s ease-in-out infinite;
+  z-index: 3;
+}
+@keyframes scrollCue {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50% { transform: translateY(4px); opacity: 1; }
+}
+
+.hero-status {
+  position: absolute;
+  top: 30px;
+  right: 32px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: color-mix(in oklab, var(--bg-1) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font: 500 11px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.hero-status::before {
+  content: '';
+  width: 7px; height: 7px;
+  background: var(--sem-green, #16C784);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--sem-green, #16C784);
+  animation: livePulse 1.6s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* ============================================================
+   SECTION 2 — LIVE ANSWER
+   ============================================================ */
+.answer-stage {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+.answer-stage-empty {
+  text-align: center;
+  padding: 60px 32px;
+  border: 1px dashed color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 18px;
+  background: color-mix(in oklab, var(--bg-1) 35%, transparent);
+}
+.answer-empty-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+.answer-empty-icon .copilot-orb {
+  width: 64px;
+  height: 64px;
+}
+.answer-empty-icon .copilot-orb::after { inset: 18px; }
+.answer-empty-hint {
+  font: 400 18px/1.3 'Instrument Serif', Georgia, serif;
+  color: var(--text-dim);
+  margin: 0 0 24px;
+}
+.answer-empty-preview {
+  margin: 0 auto;
+  max-width: 580px;
+  text-align: left;
+  background: color-mix(in oklab, var(--bg-1) 70%, transparent);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.answer-preview-q {
+  font: 600 11px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sem-pink, var(--qz-pink));
+  margin-bottom: 8px;
+}
+.answer-preview-a {
+  font-size: 13.5px;
+  color: var(--text-mute);
+  font-style: italic;
+  line-height: 1.55;
+}
+
+.answer-stage-live {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: fadeUp 0.7s var(--ease);
+}
+.answer-q-card,
+.answer-a-card {
+  border-radius: 18px;
+  padding: 26px 32px;
+  position: relative;
+}
+.answer-q-card {
+  background: linear-gradient(135deg,
+    color-mix(in oklab, var(--sem-blue, var(--qz-blue)) 20%, transparent),
+    color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 8%, transparent));
+  border: 1px solid color-mix(in oklab, var(--sem-blue, var(--qz-blue)) 35%, var(--border));
+}
+.answer-q-eyebrow,
+.answer-a-eyebrow {
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sem-blue, var(--qz-blue));
+  display: block;
+  margin-bottom: 10px;
+}
+.answer-a-eyebrow { color: var(--sem-pink, var(--qz-pink)); }
+.answer-q-text {
+  font: 400 22px/1.35 'Instrument Serif', Georgia, serif;
+  color: var(--text);
+}
+.answer-a-card {
+  background: color-mix(in oklab, var(--bg-1) 72%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+}
+.answer-a-text {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.answer-a-text sup.cite-ref {
+  color: var(--sem-amber, #F5A623);
+  font-weight: 600;
+  background: color-mix(in oklab, var(--sem-amber, #F5A623) 16%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin: 0 2px;
+  cursor: pointer;
+  font-size: 0.7em;
+  transition: all 120ms ease;
+}
+.answer-a-text sup.cite-ref:hover {
+  background: color-mix(in oklab, var(--sem-amber, #F5A623) 30%, transparent);
+  box-shadow: 0 0 14px color-mix(in oklab, var(--sem-amber, #F5A623) 50%, transparent);
+}
+.answer-a-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  align-items: center;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-soft);
+}
+.answer-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.meta-k {
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.meta-v {
+  font: 600 18px/1 'Instrument Serif', Georgia, serif;
+  color: var(--text);
+}
+.meta-v-amber { color: var(--sem-amber, #F5A623); }
+.meta-v-blue { color: var(--sem-blue, var(--qz-blue)); }
+.meta-bar {
+  width: 120px;
+  height: 6px;
+  background: var(--border-soft);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.meta-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--sem-green, #16C784), var(--sem-blue, var(--qz-blue)));
+  box-shadow: 0 0 10px color-mix(in oklab, var(--sem-green, #16C784) 50%, transparent);
+  transition: width 1s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.answer-meta-conf .meta-v { color: var(--sem-green, #16C784); }
+
+/* ============================================================
+   SECTION 3 — EXPLAINABILITY
+   ============================================================ */
+.explain-stage {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 28px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+.explain-panel {
+  background: color-mix(in oklab, var(--bg-1) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 420px;
+}
+.explain-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.explain-panel-eyebrow {
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sem-amber, #F5A623);
+}
+.pillars-panel .explain-panel-eyebrow { color: var(--sem-blue, var(--qz-blue)); }
+
+.lineage-panel .lineage-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+.pillars-list {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.pillar {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--bg-1) 50%, transparent);
+  border: 1px solid var(--border-soft);
+  transition: all 180ms ease;
+}
+.pillar:hover {
+  border-color: color-mix(in oklab, var(--sem-blue, var(--qz-blue)) 50%, var(--border));
+  background: color-mix(in oklab, var(--bg-1) 80%, transparent);
+}
+.pillar-num {
+  font: 400 26px/1 'Instrument Serif', Georgia, serif;
+  color: var(--sem-blue, var(--qz-blue));
+  align-self: center;
+  text-align: center;
+}
+.pillar-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.pillar-sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   SECTION 4 — KNOWLEDGE HEALTH
+   ============================================================ */
+.health-stage {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) 2fr;
+  gap: 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+.health-score-card {
+  background: linear-gradient(180deg,
+    color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 14%, transparent),
+    color-mix(in oklab, var(--sem-blue, var(--qz-blue)) 8%, transparent));
+  border: 1px solid color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 30%, var(--border));
+  border-radius: 18px;
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+.health-score-eyebrow {
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: var(--sem-pink, var(--qz-pink));
+}
+.health-score-display {
+  position: relative;
+  width: 200px;
+  height: 200px;
+}
+.health-ring {
+  width: 100%;
+  height: 100%;
+}
+.ring-track-big {
+  fill: none;
+  stroke: color-mix(in oklab, var(--border-soft) 90%, transparent);
+  stroke-width: 8;
+}
+.ring-fill-big {
+  fill: none;
+  stroke: var(--sem-green, #16C784);
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-dasharray: 327;
+  stroke-dashoffset: 327;
+  transform: rotate(-90deg);
+  transform-origin: 60px 60px;
+  transition: stroke-dashoffset 1.8s cubic-bezier(0.2,0.9,0.3,1.1), stroke 400ms ease;
+}
+.health-score-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  line-height: 1;
+}
+.health-score-num {
+  font: 400 64px/1 'Instrument Serif', Georgia, serif;
+  color: var(--text);
+  font-feature-settings: "tnum";
+  display: inline-block;
+  vertical-align: baseline;
+}
+.health-score-suffix {
+  font-size: 15px;
+  color: var(--text-mute);
+  align-self: flex-end;
+  padding-bottom: 12px;
+}
+
+.health-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.health-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 36px;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.health-row-label { color: var(--text-dim); font-weight: 500; }
+.health-row-bar {
+  height: 6px;
+  background: color-mix(in oklab, var(--border-soft) 70%, transparent);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+.health-row-bar::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: var(--w, 0%);
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--sem-blue, var(--qz-blue)), var(--sem-green, #16C784));
+  transition: width 1.4s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+.health-row-bar[data-tone="warn"]::after { background: linear-gradient(90deg, var(--sem-amber, #F5A623), var(--sem-pink, var(--qz-pink))); }
+.health-row-bar[data-tone="risk"]::after { background: var(--sem-pink, var(--qz-pink)); }
+.health-row-val {
+  font: 600 13px/1 'JetBrains Mono', monospace;
+  color: var(--text);
+  text-align: right;
+  font-feature-settings: "tnum";
+}
+
+.health-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  align-content: start;
+}
+.risk-card {
+  background: color-mix(in oklab, var(--bg-1) 65%, transparent);
+  border: 1px solid var(--border-soft);
+  border-left: 4px solid var(--risk-tone, var(--sem-blue, var(--qz-blue)));
+  border-radius: 14px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 200ms ease;
+}
+.risk-card[data-tone="high"]   { --risk-tone: var(--sem-pink, var(--qz-pink)); }
+.risk-card[data-tone="medium"] { --risk-tone: var(--sem-amber, #F5A623); }
+.risk-card[data-tone="low"]    { --risk-tone: var(--sem-green, #16C784); }
+.risk-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px color-mix(in oklab, var(--risk-tone) 30%, transparent);
+}
+.risk-card-value {
+  font: 400 38px/1 'Instrument Serif', Georgia, serif;
+  color: var(--risk-tone);
+  font-feature-settings: "tnum";
+}
+.risk-card-label {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.4;
+}
+.risk-card-sub {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   SECTION 5 — INSIGHTS
+   ============================================================ */
+.insights-stats {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+.insights-stats .tile {
+  background: color-mix(in oklab, var(--bg-1) 60%, transparent);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.insights-stats .tile-label {
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.insights-stats .tile-value {
+  font: 400 32px/1 'Instrument Serif', Georgia, serif;
+  color: var(--text);
+  font-feature-settings: "tnum";
+}
+.insights-stats .tile-delta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.insights-stage {
+  background: color-mix(in oklab, var(--bg-1) 50%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  overflow: hidden;
+}
+.insights-stage-head {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.insights-stage-head .tabs {
+  display: flex;
+  gap: 4px;
+}
+.insights-stage-head .tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-mute);
+  padding: 8px 16px;
+  border-radius: 999px;
+  font: 500 12.5px/1 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+.insights-stage-head .tab:hover { color: var(--text); }
+.insights-stage-head .tab.is-active {
+  background: color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 15%, var(--bg-1));
+  color: var(--text);
+  border-color: color-mix(in oklab, var(--sem-pink, var(--qz-pink)) 40%, transparent);
+}
+
+.insights-body {
+  min-height: 380px;
+  padding: 24px 28px;
+}
+.insight-panel { display: none; }
+.insight-panel.is-active { display: block; }
+
+/* ============================================================
+   Footer
+   ============================================================ */
+.story-footer {
+  padding: 36px clamp(24px, 5vw, 80px);
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--bg) 96%, var(--qz-blue) 4%);
+}
+.footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.footer-brand,
+.footer-meta {
+  font: 500 11.5px/1.5 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  color: var(--text-mute);
+}
+
+/* ============================================================
+   Navbar tweak for narrative — make Talk-to-Experts the CTA stand-out
+   ============================================================ */
+body.narrative .qz-nav { gap: 18px; }
+body.narrative .qz-nav a.nav-scroll {
+  color: var(--nav-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ============================================================
+   Mobile responsive
+   ============================================================ */
+@media (max-width: 980px) {
+  .hero-overlay {
+    width: calc(100% - 32px);
+    left: 16px;
+    right: 16px;
+  }
+  .hero-title { font-size: clamp(34px, 8vw, 52px); }
+  .explain-stage,
+  .health-stage {
+    grid-template-columns: 1fr;
+  }
+  .health-risk-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .insights-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .answer-q-text { font-size: 18px; }
+  .answer-a-text { font-size: 15px; }
+}
+@media (max-width: 640px) {
+  .health-risk-grid,
+  .insights-stats {
+    grid-template-columns: 1fr;
+  }
+  .hero-section { min-height: 100vh; }
+}
+
+/* Disable old maturity-card / cmd-bar styles when narrative is active */
+body.narrative .maturity-card,
+body.narrative .cmd-status-wrap,
+body.narrative .theme-toggle { display: none !important; }
+
+/* ============================================================================
+   Sticky ask bar (visible after user scrolls past the hero)
+   ============================================================================ */
+.sticky-ask {
+  position: fixed;
+  top: 60px; /* sits just under the qz-navbar */
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 10px 28px;
+  background: linear-gradient(180deg,
+    color-mix(in oklab, var(--bg) 92%, transparent),
+    color-mix(in oklab, var(--bg) 78%, transparent));
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid color-mix(in oklab, var(--sem-pink) 22%, var(--border-soft));
+  transform: translateY(-110%);
+  opacity: 0;
+  transition: transform 280ms cubic-bezier(0.2, 0.9, 0.3, 1.05), opacity 240ms ease;
+  pointer-events: none;
+}
+.sticky-ask.is-visible {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.sticky-ask-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.sticky-ask-label {
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sem-pink);
+  font-weight: 700;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.sticky-ask-form {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.sticky-ask-form input {
+  flex: 1;
+  height: 38px;
+  padding: 0 14px;
+  background: color-mix(in oklab, var(--bg-1) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font: 13px/1 var(--font-sans, 'Inter'), sans-serif;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.sticky-ask-form input::placeholder { color: var(--text-mute); }
+.sticky-ask-form input:focus {
+  outline: none;
+  border-color: var(--sem-pink);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--sem-pink) 18%, transparent);
+}
+.sticky-ask-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 18px;
+  height: 38px;
+  background: linear-gradient(135deg, var(--sem-pink), var(--sem-blue));
+  border: none;
+  border-radius: 999px;
+  color: white;
+  font: 600 12.5px/1 'Inter', sans-serif;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: all 180ms ease;
+}
+.sticky-ask-submit:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--sem-pink) 35%, transparent);
+}
+
+/* When sticky ask is visible, push sections down a touch so headings don't
+   end up directly under the bar after smooth scroll */
+.story-section {
+  scroll-margin-top: 110px;
+}
+
+/* ============================================================================
+   Dramatic graph activation — when an answer comes back, unrelated nodes fade
+   hard, activated nodes pulse pink. This is the "BOOM" moment.
+   ============================================================================ */
+.galaxy-canvas.graph-activated {
+  position: relative;
+}
+.galaxy-canvas.graph-activated::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(circle at center,
+    color-mix(in oklab, var(--sem-pink) 8%, transparent) 0%,
+    transparent 50%);
+  animation: graphBoom 1.6s cubic-bezier(0.2, 0.9, 0.4, 1.05);
+  opacity: 0;
+}
+@keyframes graphBoom {
+  0%   { opacity: 0; transform: scale(0.4); }
+  30%  { opacity: 1; transform: scale(1.0); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
