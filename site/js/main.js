@@ -509,13 +509,30 @@ async function ask(question, opts = {}) {
   updateCopilotMetrics(citations, trace, ranked, cohesion);
   updateGalaxyStatus(trace);
 
-  // Auto-scroll only on first REAL ask, not on the seeded demo answer
-  if (!silent && !state.hasAutoScrolled) {
-    state.hasAutoScrolled = true;
-    setTimeout(() => {
-      const target = document.getElementById('section-answer');
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 250);
+  // Scroll policy:
+  //   - Seeded demo answer (silent): never scroll. User loads fresh, sees hero.
+  //   - First real ask via hero composer: smooth-scroll to answer section.
+  //   - Subsequent asks (sticky bar): only scroll if the answer is NOT already
+  //     visible. Don't yank the user if they're already looking at it.
+  if (!silent) {
+    const target = document.getElementById('section-answer');
+    if (target) {
+      const r = target.getBoundingClientRect();
+      const viewportH = window.innerHeight;
+      const stickyOffset = 130; // navbar + sticky-ask combined
+      // Answer is "visible enough" if top is within viewport (allowing for sticky)
+      const isVisible = r.top >= stickyOffset && r.top < viewportH * 0.75;
+      const isAbove = r.bottom < stickyOffset;
+      // Scroll only if user is above the answer (still in hero) or it's offscreen below
+      if (!isVisible && (r.top > viewportH * 0.75 || isAbove)) {
+        setTimeout(() => {
+          window.scrollTo({
+            top: target.offsetTop - stickyOffset + 10,
+            behavior: 'smooth',
+          });
+        }, 200);
+      }
+    }
   }
 }
 
@@ -526,6 +543,14 @@ function populateAnswerStage(question, answerHtml, citations, ranked, trace, coh
   if (!liveEl) return;
   if (emptyEl) emptyEl.hidden = true;
   liveEl.hidden = false;
+
+  // Quick "refreshing" flash so the user sees the answer is being replaced —
+  // without this, asking a second question with similar-length answer can
+  // look like nothing happened.
+  liveEl.classList.remove('is-refreshing');
+  void liveEl.offsetWidth; // force reflow
+  liveEl.classList.add('is-refreshing');
+  setTimeout(() => liveEl.classList.remove('is-refreshing'), 600);
 
   const qEl = document.getElementById('answer-stage-question');
   const aEl = document.getElementById('answer-stage-text');
