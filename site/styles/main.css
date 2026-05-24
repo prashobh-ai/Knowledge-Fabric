@@ -123,21 +123,26 @@ html, body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden;
 }
+html { overflow-x: hidden; }
 body {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
+  min-height: 100vh;
   position: relative;
   background: var(--bg);
+}
+/* Narrative scroll mode (the storytelling layout uses <body class="narrative">):
+   the body becomes a normal scrollable document. Aurora background and sections
+   stack vertically. This replaces the old fit-the-viewport flex column behavior. */
+body.narrative {
+  display: block;
+  height: auto;
 }
 
 /* ============================================================================
    AURORA + DIGITAL GRID — vibrant texture layers behind content
    ============================================================================ */
 .aurora-layer {
-  position: absolute;
+  position: fixed;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
@@ -257,10 +262,12 @@ body {
   padding: 10px 24px;
   background: var(--nav-bg);
   border-bottom: 1px solid var(--nav-border);
-  flex-shrink: 0;
-  position: relative;
-  z-index: 20;
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
+/* Narrative mode: make sure first section accounts for navbar's sticky height */
+body.narrative .story-section:first-of-type { margin-top: 0; }
 .qz-brand {
   display: flex;
   align-items: center;
@@ -2986,3 +2993,115 @@ body.narrative .theme-toggle { display: none !important; }
   30%  { opacity: 1; transform: scale(1.0); }
   100% { opacity: 0; transform: scale(1.4); }
 }
+
+/* ============================================================================
+   Phase 5 — control fixes: visible "refreshing" feedback + scroll progress
+   ============================================================================ */
+
+/* Brief glow flash on the live answer card when a new question is answered.
+   Tells the user "yes, your ask landed, here's the new answer" — without it,
+   answer→answer transitions can look indistinguishable. */
+.answer-stage-live.is-refreshing .answer-q-card,
+.answer-stage-live.is-refreshing .answer-a-card {
+  animation: answerRefresh 0.6s ease-out;
+}
+@keyframes answerRefresh {
+  0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--sem-pink) 35%, transparent); transform: translateY(2px); opacity: 0.7; }
+  40%  { box-shadow: 0 0 0 8px color-mix(in oklab, var(--sem-pink) 20%, transparent); transform: translateY(0); opacity: 1; }
+  100% { box-shadow: 0 0 0 0 transparent; transform: translateY(0); opacity: 1; }
+}
+
+/* Sticky submit "working" spinner — replaces the arrow with a small spinner */
+.sticky-ask-submit.is-working {
+  pointer-events: none;
+  opacity: 0.85;
+}
+.sticky-ask-submit.is-working svg {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Scroll progress bar across the very top — gives a sense of place in the
+   long narrative scroll. Sits above everything else, doesn't intercept clicks. */
+.scroll-progress {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: transparent;
+  z-index: 60;
+  pointer-events: none;
+}
+.scroll-progress-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--sem-pink), var(--sem-amber), var(--sem-blue));
+  box-shadow: 0 0 8px color-mix(in oklab, var(--sem-pink) 50%, transparent);
+  transition: width 80ms linear;
+}
+
+/* Section-jump pill nav — fixed right side, shows current section, lets user
+   jump directly. Compact, doesn't dominate. */
+.section-nav {
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+}
+.section-nav-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--text-mute) 50%, transparent);
+  border: 1px solid transparent;
+  cursor: pointer;
+  position: relative;
+  transition: all 180ms ease;
+}
+.section-nav-dot::after {
+  content: attr(data-label);
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%) translateX(8px);
+  font: 600 10px/1 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: color-mix(in oklab, var(--bg-1) 95%, transparent);
+  border: 1px solid var(--border-soft);
+  padding: 5px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 180ms ease;
+}
+.section-nav-dot:hover {
+  background: var(--sem-pink);
+  transform: scale(1.4);
+}
+.section-nav-dot:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+.section-nav-dot.is-current {
+  background: var(--sem-pink);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--sem-pink) 60%, transparent);
+  transform: scale(1.25);
+}
+
+/* Hide section nav on narrow screens — it's a desktop convenience */
+@media (max-width: 760px) {
+  .section-nav { display: none; }
+}
+
+/* CRITICAL: sections need scroll-margin-top so anchor scrolls don't end up
+   underneath the sticky navbar + sticky-ask bar (combined ~120px). */
+.story-section { scroll-margin-top: 130px; }
