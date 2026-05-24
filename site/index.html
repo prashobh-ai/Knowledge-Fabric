@@ -25,6 +25,18 @@
     <div class="grid-overlay"></div>
   </div>
 
+  <!-- ===== Scroll progress bar (sits at very top of viewport) ===== -->
+  <div class="scroll-progress" aria-hidden="true"><div class="scroll-progress-fill" id="scroll-progress-fill"></div></div>
+
+  <!-- ===== Right-side section dots ===== -->
+  <nav class="section-nav" id="section-nav" aria-label="Page sections">
+    <button class="section-nav-dot is-current" data-target="hero" data-label="Hero"></button>
+    <button class="section-nav-dot" data-target="section-answer" data-label="Live Answer"></button>
+    <button class="section-nav-dot" data-target="section-explain" data-label="Explainability"></button>
+    <button class="section-nav-dot" data-target="section-health" data-label="Health"></button>
+    <button class="section-nav-dot" data-target="section-insights" data-label="Insights"></button>
+  </nav>
+
   <!-- ===== QualiZeal brand navbar ===== -->
   <header class="qz-navbar">
     <a class="qz-brand" href="https://www.qualizeal.com" target="_blank" rel="noreferrer">
@@ -389,6 +401,39 @@
       });
     });
 
+    // Scroll progress bar + section-nav dot highlighting
+    (function () {
+      const fill = document.getElementById('scroll-progress-fill');
+      const dots = [...document.querySelectorAll('.section-nav-dot')];
+      const sections = dots.map(d => document.getElementById(d.dataset.target)).filter(Boolean);
+
+      // Click any dot to jump
+      dots.forEach(d => {
+        d.addEventListener('click', () => {
+          const el = document.getElementById(d.dataset.target);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+
+      function update() {
+        const docH = document.documentElement.scrollHeight - window.innerHeight;
+        const sy = window.scrollY;
+        if (fill) fill.style.width = `${Math.min(100, Math.max(0, (sy / Math.max(1, docH)) * 100))}%`;
+
+        // Find which section is most "in view" — closest to scroll position + 30% offset
+        const probe = sy + window.innerHeight * 0.3;
+        let currentIdx = 0;
+        for (let i = 0; i < sections.length; i++) {
+          const top = sections[i].offsetTop;
+          if (top <= probe) currentIdx = i;
+        }
+        dots.forEach((d, i) => d.classList.toggle('is-current', i === currentIdx));
+      }
+      window.addEventListener('scroll', update, { passive: true });
+      window.addEventListener('resize', update);
+      update();
+    })();
+
     // Sticky ask bar — slides in when user scrolls past the hero
     (function () {
       const sticky = document.getElementById('sticky-ask');
@@ -426,19 +471,38 @@
       }, { passive: true });
 
       // Forward sticky form submissions through the hero composer (which
-      // already wires into the ask() function via main.js)
+      // already wires into the ask() function via main.js). Lock sticky form
+      // during the ask so the user can't double-submit, and visually show
+      // working state.
       const form = document.getElementById('sticky-ask-form');
       const input = document.getElementById('sticky-ask-input');
+      const submit = form ? form.querySelector('button[type="submit"]') : null;
       const heroForm = document.getElementById('composer-form');
       const heroInput = document.getElementById('composer-input');
       if (form && heroForm && heroInput && input) {
-        form.addEventListener('submit', e => {
+        form.addEventListener('submit', async e => {
           e.preventDefault();
           const q = input.value.trim();
           if (!q) return;
+          if (submit) { submit.disabled = true; submit.classList.add('is-working'); }
+          input.disabled = true;
           heroInput.value = q;
           input.value = '';
-          heroForm.dispatchEvent(new Event('submit'));
+          // Use requestSubmit so the native submit listener fires properly
+          if (typeof heroForm.requestSubmit === 'function') heroForm.requestSubmit();
+          else heroForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+          // Wait until the hero submit button re-enables, then re-enable ours
+          const ready = () => {
+            const heroSubmit = document.getElementById('composer-submit');
+            if (heroSubmit && !heroSubmit.disabled) {
+              input.disabled = false;
+              if (submit) { submit.disabled = false; submit.classList.remove('is-working'); }
+              input.focus();
+            } else {
+              setTimeout(ready, 80);
+            }
+          };
+          setTimeout(ready, 100);
         });
       }
     })();
